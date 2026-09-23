@@ -1,44 +1,8 @@
-import type { Plugin } from "@opencode-ai/plugin";
-import { applySubagentEvent } from "./events.js";
-import { renderStatusLine } from "./render.js";
-import {
-  createEmptyState,
-  loadState,
-  resolveStatePath,
-  resolveTextPath,
-  saveState,
-  saveStatusText,
-  shouldPreserveStateOnStartup,
-} from "./state.js";
+import { Plugin } from "@opencode-ai/plugin";
 
-export const SubagentStatusline: Plugin = async () => {
-  const statePath = resolveStatePath();
-  const textPath = resolveTextPath(statePath);
+export const SubagentStatusline = Plugin.define({
+  id: "opencode-subagent-statusline",
+  setup() {},
+});
 
-  if (!shouldPreserveStateOnStartup()) {
-    try {
-      const emptyState = createEmptyState();
-      await saveState(statePath, emptyState);
-      await saveStatusText(textPath, renderStatusLine(emptyState));
-    } catch {
-      // Defensive by design: initialization failure should not crash OpenCode startup.
-    }
-  }
-
-  return {
-    event: async ({ event }: { event?: unknown }) => {
-      try {
-        const state = await loadState(statePath);
-        const changed = applySubagentEvent(state, event);
-
-        if (changed) {
-          await saveState(statePath, state);
-          const line = renderStatusLine(state);
-          await saveStatusText(textPath, line);
-        }
-      } catch {
-        // Defensive by design: plugin should never crash OpenCode on bad event shape.
-      }
-    },
-  };
-};
+export default Object.assign(SubagentStatusline, { tui: true });

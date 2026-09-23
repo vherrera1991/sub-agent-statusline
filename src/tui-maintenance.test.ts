@@ -1,4 +1,8 @@
-import type { TuiPluginApi } from "@opencode-ai/plugin/tui";
+import { execFileSync } from "node:child_process";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import type { TuiRuntimeApi } from "./tui-runtime-api.js";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { ChildSessionState, StatuslineState } from "./state.js";
@@ -39,7 +43,7 @@ function apiWithReadSpies() {
   const part = vi.fn(() => []);
   const api = {
     state: { session: { status, messages }, part },
-  } as unknown as TuiPluginApi;
+  } as unknown as TuiRuntimeApi;
   return { api, status, messages, part };
 }
 
@@ -156,6 +160,41 @@ describe("TUI state maintenance", () => {
     expect(status).toHaveBeenCalledWith("ses_fallback");
     expect(messages).toHaveBeenCalledWith("ses_fallback");
     expect(part).toHaveBeenCalledWith("msg_child");
+  });
+
+  it("rehydrates terminal tokens from the v2 session_message table", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-17T09:02:00.000Z"));
+    const directory = mkdtempSync(join(tmpdir(), "subagent-statusline-v2-db-"));
+    const dbPath = join(directory, "opencode.db");
+    const sessionID = "ses_v2_token_rehydrate";
+    const previousDbPath = process.env.OPENCODE_SUBAGENT_STATUSLINE_OPENCODE_DB;
+    process.env.OPENCODE_SUBAGENT_STATUSLINE_OPENCODE_DB = dbPath;
+
+    try {
+      const data = JSON.stringify({ tokens: { input: 12, output: 8, total: 20 } });
+      execFileSync("sqlite3", [
+        dbPath,
+        `CREATE TABLE session_message (id TEXT, session_id TEXT, type TEXT, seq INTEGER, time_created INTEGER, time_updated INTEGER, data TEXT); INSERT INTO session_message VALUES ('msg_v2', '${sessionID}', 'assistant', 1, 100, 100, '${data}');`,
+      ]);
+
+      const { api } = apiWithReadSpies();
+      const current = state([child({ id: sessionID })]);
+      const next = runTuiStateMaintenance(api, current);
+
+      expect(next.children[sessionID]?.tokens).toEqual({
+        input: 12,
+        output: 8,
+        total: 20,
+      });
+    } finally {
+      if (previousDbPath === undefined) {
+        delete process.env.OPENCODE_SUBAGENT_STATUSLINE_OPENCODE_DB;
+      } else {
+        process.env.OPENCODE_SUBAGENT_STATUSLINE_OPENCODE_DB = previousDbPath;
+      }
+      rmSync(directory, { recursive: true, force: true });
+    }
   });
 
   it("prunes expired terminal children while idle", () => {

@@ -1,7 +1,7 @@
 import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { TuiPluginApi } from "@opencode-ai/plugin/tui";
+import type { TuiRuntimeApi } from "./tui-runtime-api.js";
 import { describe, expect, it, vi } from "vitest";
 import { readOpenCodeLogFileIfSmall } from "./logs.js";
 import {
@@ -80,7 +80,7 @@ async function hydrateState(input: {
         status: vi.fn(async () => ({ data: input.statuses ?? {} })),
       },
     },
-  } as unknown as TuiPluginApi;
+  } as unknown as TuiRuntimeApi;
 
   await hydratePreviousSubagents(
     api,
@@ -140,7 +140,7 @@ describe("TUI subagent snapshots", () => {
     const providers = [{
       id: "openai",
       models: { "gpt-5.6": { name: "GPT 5.6" } },
-    }] as unknown as TuiPluginApi["state"]["provider"];
+    }] as unknown as TuiRuntimeApi["state"]["provider"];
 
     expect(formatChildModelLine(plain, providers, 20)).toBeUndefined();
     expect(
@@ -1106,7 +1106,7 @@ describe("probeRunningEvidence", () => {
           messages: vi.fn(async () => ({ data: [] })),
         },
       },
-    } as unknown as TuiPluginApi;
+    } as unknown as TuiRuntimeApi;
 
     const evidence = await probeRunningEvidence({
       api,
@@ -1584,17 +1584,17 @@ describe("resolveSidebarReturnFocusAction", () => {
     childRowID: "row-1",
   };
 
-  it("returns focus-prompt for remembered child -> parent return", () => {
+  it("returns release-list-focus for remembered child -> parent return", () => {
     expect(
       resolveSidebarReturnFocusAction({
         pendingSidebarRefocus,
         previousRouteSessionID: "child",
         routeSessionID: "parent",
       }),
-    ).toBe("focus-prompt");
+    ).toBe("release-list-focus");
   });
 
-  it("returns focus-prompt while preserving showCompletedHistory", () => {
+  it("returns release-list-focus while preserving showCompletedHistory", () => {
     expect(
       resolveSidebarReturnFocusAction({
         pendingSidebarRefocus: {
@@ -1604,7 +1604,7 @@ describe("resolveSidebarReturnFocusAction", () => {
         previousRouteSessionID: "child",
         routeSessionID: "parent",
       }),
-    ).toBe("focus-prompt");
+    ).toBe("release-list-focus");
   });
 
   it("returns clear-pending when route leaves remembered child path", () => {

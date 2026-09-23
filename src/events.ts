@@ -41,11 +41,15 @@ export type EventLike = {
       time?: unknown;
       status?: unknown;
       state?: unknown;
+      [key: string]: unknown;
     };
     parentID?: unknown;
     part?: unknown;
     status?: unknown;
     state?: unknown;
+    time?: unknown;
+    error?: unknown;
+    [key: string]: unknown;
   };
   parentID?: unknown;
   [key: string]: unknown;
@@ -833,13 +837,93 @@ export function extractChildDetails(event: EventLike): {
   return details;
 }
 
+function normalizeOpenCodeV2Event(event: unknown): EventLike {
+  const record = isRecord(event) ? event : {};
+  const type = asString(record.type);
+  const data = isRecord(record.data) ? record.data : undefined;
+  if (!type || !data) return record as EventLike;
+
+  const created = record.created;
+  if (type === "session.created") {
+    return {
+      ...record,
+      properties: {
+        info: {
+          ...data,
+          id: data.sessionID,
+          time: { created },
+        },
+      },
+    };
+  }
+
+  if (type === "session.execution.started") {
+    return {
+      ...record,
+      type: "session.status",
+      properties: { sessionID: data.sessionID, status: "running", time: { updated: created } },
+    };
+  }
+
+  if (type === "session.execution.succeeded" || type === "session.execution.interrupted") {
+    return {
+      ...record,
+      type: "session.idle",
+      properties: { sessionID: data.sessionID, time: { completed: created } },
+    };
+  }
+
+  if (type === "session.execution.failed") {
+    return {
+      ...record,
+      type: "session.error",
+      properties: {
+        sessionID: data.sessionID,
+        error: data.error,
+        time: { completed: created },
+      },
+    };
+  }
+
+  if (type === "session.step.started") {
+    const model = isRecord(data.model) ? data.model : {};
+    return {
+      ...record,
+      type: "message.updated",
+      properties: {
+        info: {
+          sessionID: data.sessionID,
+          id: data.assistantMessageID,
+          role: "assistant",
+          providerID: model.providerID,
+          modelID: model.modelID,
+          variant: model.variant,
+          time: { created },
+        },
+      },
+    };
+  }
+
+  return { ...record, properties: data } as EventLike;
+}
+
 export function applySubagentEvent(
   state: StatuslineState,
   event: unknown,
 ): boolean {
-  const e = (event ?? {}) as EventLike;
+  const e = normalizeOpenCodeV2Event(event);
   const type = asString(e.type);
   if (!type) return false;
+
+  if (type === "session.renamed") {
+    const sessionID = asString(e.properties?.sessionID);
+    const title = asString(e.properties?.title);
+    if (!sessionID || !title || !state.children[sessionID]) return false;
+    return upsertChildDetails(state, sessionID, {
+      title,
+      updatedAt: extractEventTimestamp(e, ["updated", "created"]),
+    });
+  }
 
   if (type === "session.created" || type === "session.updated") {
     const child = extractCreatedChild(e);

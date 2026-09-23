@@ -1,11 +1,4 @@
-import type {
-  TuiPlugin,
-  TuiPluginApi,
-  TuiPluginModule,
-  TuiPromptRef,
-  TuiSlotContext,
-  TuiThemeCurrent,
-} from "@opencode-ai/plugin/tui";
+import { Plugin } from "@opencode-ai/plugin/tui";
 import type {
   BoxRenderable,
   KeyEvent,
@@ -13,6 +6,12 @@ import type {
   ScrollBoxRenderable,
 } from "@opentui/core";
 import { useKeyboard } from "@opentui/solid";
+import type {
+  TuiRuntimeApi,
+  TuiSlotContext,
+  TuiThemeCurrent,
+} from "./tui-runtime-api.js";
+import { createV2TuiApi } from "./v2-tui-adapter.js";
 import { execFileSync } from "node:child_process";
 import { appendFileSync, existsSync, mkdirSync, readdirSync } from "node:fs";
 import { createRequire } from "node:module";
@@ -59,7 +58,6 @@ import {
   type SessionMessageSummary,
 } from "./reconcile.js";
 import {
-  focusPromptWithDeferredRetry,
   resolveSidebarReturnFocusAction,
   resolveSiblingSidebarRefocus,
   shouldReleaseSidebarListFocus,
@@ -307,27 +305,6 @@ export function preservedSidebarScrollTop(input: {
 
 type SidebarContentContext = TuiSlotContext & { session_id?: string };
 type HomeBottomContext = TuiSlotContext;
-type PromptRefProp =
-  | ((ref: TuiPromptRef | undefined) => void)
-  | { current?: TuiPromptRef | undefined }
-  | undefined;
-type HomePromptProps = {
-  workspaceID?: string;
-  workspace_id?: string;
-  ref?: PromptRefProp;
-  [key: string]: unknown;
-};
-type SessionPromptProps = {
-  sessionID?: string;
-  session_id?: string;
-  right?: unknown;
-  visible?: boolean;
-  disabled?: boolean;
-  onSubmit?: () => void;
-  on_submit?: () => void;
-  ref?: PromptRefProp;
-  [key: string]: unknown;
-};
 
 interface RehydratedTokenCacheEntry {
   attempts: number;
@@ -471,7 +448,7 @@ function readDoneTokensFromOpenCodeDb(
       "sqlite3",
       [
         dbPath,
-        `select data from message where session_id='${escapeSqlString(sessionID)}' order by time_created desc limit 50;`,
+        `select data from session_message where session_id='${escapeSqlString(sessionID)}' order by time_created desc limit 50;`,
       ],
       { encoding: "utf8", timeout: 1000, maxBuffer: 1024 * 1024 },
     ),
@@ -576,7 +553,7 @@ function messageIDOf(message: unknown): string | undefined {
 }
 
 function pushSessionCandidates(
-  api: TuiPluginApi,
+  api: TuiRuntimeApi,
   sessionID: string | undefined,
   candidates: unknown[],
 ): void {
@@ -598,7 +575,7 @@ function pushSessionCandidates(
 }
 
 function hydrateChildTokensFromTuiState(
-  api: TuiPluginApi,
+  api: TuiRuntimeApi,
   child: ChildSessionState,
 ): ChildTokenState | undefined {
   const candidates: unknown[] = [];
@@ -636,7 +613,7 @@ function hydrateChildTokensFromTuiState(
 }
 
 function hydrateStateTokensFromTuiState(
-  api: TuiPluginApi,
+  api: TuiRuntimeApi,
   state: StatuslineState,
 ): boolean {
   let changed = false;
@@ -699,7 +676,7 @@ function refreshLiveState(state: StatuslineState): boolean {
 }
 
 export function runTuiStateMaintenance(
-  api: TuiPluginApi,
+  api: TuiRuntimeApi,
   current: StatuslineState,
 ): StatuslineState {
   const next = cloneState(current);
@@ -834,7 +811,7 @@ export function backfillHydratedTargetSessionIDs(
 }
 
 function navigateToSessionTarget(
-  api: TuiPluginApi,
+  api: TuiRuntimeApi,
   targetSessionID: string | undefined,
 ): void {
   if (!isSessionTarget(targetSessionID)) return;
@@ -1121,7 +1098,7 @@ export function subagentRowHeight(input: {
 
 export function formatChildModelLine(
   child: ChildSessionState,
-  providers: TuiPluginApi["state"]["provider"],
+  providers: TuiRuntimeApi["state"]["provider"],
   width: number,
 ): string | undefined {
   if (!child.model?.variant) return undefined;
@@ -1185,14 +1162,13 @@ export function resolveSidebarSubagentSnapshot(input: {
 }
 
 function SidebarSubagents(props: {
-  api: TuiPluginApi;
+  api: TuiRuntimeApi;
   sessionID: string;
   state: () => StatuslineState;
   nowMs: () => number;
   expanded: () => boolean;
   onToggleExpanded: () => void;
   onSetExpanded: (expanded: boolean) => void;
-  onReturnFocus: () => void;
   onToggleListFocus: () => void;
   onNavigateToChild: (input: {
     parentSessionID: string;
@@ -1326,7 +1302,6 @@ function SidebarSubagents(props: {
     if (!shouldReleaseFocus) return;
 
     focusRegistration.blurList();
-    props.onReturnFocus();
   });
   const completedHistoryRegistration: SidebarCompletedHistoryRegistration = {
     toggleCompletedHistory: () => {
@@ -1527,7 +1502,6 @@ function SidebarSubagents(props: {
       toggleCompletedHistory();
     } else if (name === "escape" || name === "esc") {
       focusRegistration.blurList();
-      props.onReturnFocus();
     } else {
       return;
     }
@@ -1909,7 +1883,7 @@ function HomeBottomStatus(props: {
 }
 
 export async function hydratePreviousSubagents(
-  api: TuiPluginApi,
+  api: TuiRuntimeApi,
   currentSessionID: string,
   statePath: string,
   textPath: string,
@@ -2297,7 +2271,7 @@ function timestampMillisFromUnknown(value: unknown): number | undefined {
   return undefined;
 }
 
-function resolveRouteSessionID(api: TuiPluginApi): string | undefined {
+function resolveRouteSessionID(api: TuiRuntimeApi): string | undefined {
   return api.route.current.name === "session" &&
     typeof api.route.current.params?.sessionID === "string"
     ? api.route.current.params.sessionID
@@ -2401,7 +2375,7 @@ function selectRunningReconcileCandidates(input: {
 }
 
 export async function probeRunningEvidence(input: {
-  api: TuiPluginApi;
+  api: TuiRuntimeApi;
   targetSessionID: string;
   directory: string;
   candidateAgeMs: number;
@@ -2519,7 +2493,7 @@ export async function probeRunningEvidence(input: {
   };
 }
 
-function initializeTui(api: TuiPluginApi, disposeRoot: () => void): void {
+function initializeTui(api: TuiRuntimeApi, disposeRoot: () => void): void {
   const statePath = resolveStatePath();
   const textPath = resolveTextPath(statePath);
   const [state, setState] = createSignal<StatuslineState>(createEmptyState());
@@ -2550,37 +2524,11 @@ function initializeTui(api: TuiPluginApi, disposeRoot: () => void): void {
   let previousRouteSessionID: string | undefined;
   let pendingSidebarRefocus: PendingSidebarRefocus | undefined;
   let pendingRefocusConsumed = false;
-  let activePromptRef: TuiPromptRef | undefined;
 
-  const consumePendingSidebarRefocus = ():
-    | PendingSidebarRefocus
-    | undefined => {
+  const consumePendingSidebarRefocus = (): PendingSidebarRefocus | undefined => {
     if (pendingRefocusConsumed) return undefined;
     pendingRefocusConsumed = true;
     return pendingSidebarRefocus;
-  };
-
-  const setActivePromptRef = (ref: TuiPromptRef | undefined): void => {
-    activePromptRef = ref;
-  };
-
-  const composePromptRef = (slotRef: PromptRefProp) => {
-    return (ref: TuiPromptRef | undefined): void => {
-      setActivePromptRef(ref);
-      if (typeof slotRef === "function") {
-        slotRef(ref);
-      } else if (slotRef && "current" in slotRef) {
-        slotRef.current = ref;
-      }
-    };
-  };
-
-  const focusActivePrompt = (): void => {
-    focusPromptWithDeferredRetry(() => {
-      if (!activePromptRef) return false;
-      activePromptRef.focus();
-      return true;
-    });
   };
 
   const rememberSidebarChildNavigation = (
@@ -2618,7 +2566,6 @@ function initializeTui(api: TuiPluginApi, disposeRoot: () => void): void {
     api.ui.dialog.clear();
     if (isAnySidebarSubagentListFocused()) {
       blurVisibleSidebarSubagentList();
-      focusActivePrompt();
       return;
     }
 
@@ -2702,9 +2649,8 @@ function initializeTui(api: TuiPluginApi, disposeRoot: () => void): void {
       routeSessionID,
     });
     pendingRefocusConsumed = false;
-    if (sidebarReturnAction === "focus-prompt") {
+    if (sidebarReturnAction === "release-list-focus") {
       blurVisibleSidebarSubagentList();
-      focusActivePrompt();
     } else if (sidebarReturnAction === "clear-pending") {
       pendingSidebarRefocus = undefined;
     }
@@ -3077,15 +3023,7 @@ function initializeTui(api: TuiPluginApi, disposeRoot: () => void): void {
     });
   };
 
-  const disposers = [
-    api.event.on("session.created", applyEvent),
-    api.event.on("session.updated", applyEvent),
-    api.event.on("session.status", applyEvent),
-    api.event.on("session.idle", applyEvent),
-    api.event.on("session.error", applyEvent),
-    api.event.on("message.updated", applyEvent),
-    api.event.on("message.part.updated", applyEvent),
-  ];
+  const disposers = [api.event.on("*", applyEvent)];
 
   api.lifecycle.onDispose(() => {
     disposed = true;
@@ -3134,7 +3072,6 @@ function initializeTui(api: TuiPluginApi, disposeRoot: () => void): void {
                 setSubagentsExpandedPreference(!subagentsExpanded())
               }
               onSetExpanded={setSubagentsExpandedSilently}
-              onReturnFocus={focusActivePrompt}
               onToggleListFocus={toggleSidebarListFocus}
               onNavigateToChild={rememberSidebarChildNavigation}
               sidebarWidth={() => resolveSidebarWidth(ctx)}
@@ -3147,47 +3084,15 @@ function initializeTui(api: TuiPluginApi, disposeRoot: () => void): void {
       home_bottom(ctx: HomeBottomContext) {
         return <HomeBottomStatus state={state} theme={ctx.theme.current} />;
       },
-      home_prompt(_ctx: TuiSlotContext, props: HomePromptProps) {
-        const promptProps = {
-          ...props,
-          ...(props.workspaceID === undefined &&
-          props.workspace_id !== undefined
-            ? { workspaceID: props.workspace_id }
-            : {}),
-          ref: composePromptRef(props.ref),
-        };
-        return <api.ui.Prompt {...promptProps} />;
-      },
-      session_prompt(_ctx: TuiSlotContext, props: SessionPromptProps) {
-        const sessionID = props.sessionID ?? props.session_id;
-        const promptProps = {
-          ...props,
-          ...(props.sessionID === undefined && props.session_id !== undefined
-            ? { sessionID: props.session_id }
-            : {}),
-          ...(props.onSubmit === undefined && props.on_submit !== undefined
-            ? { onSubmit: props.on_submit }
-            : {}),
-          right:
-            props.right ??
-            (sessionID ? (
-              <api.ui.Slot name="session_prompt_right" session_id={sessionID} />
-            ) : undefined),
-          ref: composePromptRef(props.ref),
-        };
-        return <api.ui.Prompt {...promptProps} />;
-      },
     },
   });
 }
 
-const tui: TuiPlugin = async (api: TuiPluginApi) => {
-  createRoot((disposeRoot) => initializeTui(api, disposeRoot));
-};
-
-const plugin: TuiPluginModule = {
+export default Plugin.define({
   id: TUI_PLUGIN_ID,
-  tui,
-};
-
-export default plugin;
+  setup(context) {
+    const bridge = createV2TuiApi(context);
+    createRoot((disposeRoot) => initializeTui(bridge.api, disposeRoot));
+    return bridge.dispose;
+  },
+});

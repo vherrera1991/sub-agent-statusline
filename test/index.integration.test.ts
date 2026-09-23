@@ -1,28 +1,52 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
-import { SubagentStatusline } from "../src/index.js";
+import { SubagentStatuslineRuntime } from "../src/runtime.js";
 import type { StatuslineState } from "../src/state.js";
 import {
   createRuntimeHarness,
   pathExists,
-  readJsonFixture,
   readRuntimeState,
   readStatusText,
 } from "./helpers/runtime-harness.js";
 
-async function createPlugin() {
-  return SubagentStatusline({} as Parameters<typeof SubagentStatusline>[0]);
+async function runRuntimePlugin(events: unknown[] = []): Promise<void> {
+  let finishStream: () => void = () => {};
+  const streamFinished = new Promise<void>((resolve) => {
+    finishStream = resolve;
+  });
+  const stream = async function* () {
+    try {
+      yield* events;
+    } finally {
+      finishStream();
+    }
+  };
+  const cleanup = await SubagentStatuslineRuntime.setup({
+    event: { subscribe: () => stream() },
+  } as never);
+
+  await streamFinished;
+  if (typeof cleanup === "function") cleanup();
 }
 
 describe("SubagentStatusline runtime", () => {
   it("initializes empty runtime files and persists supported event changes", async () => {
     const harness = await createRuntimeHarness();
-    const plugin = await createPlugin();
-    const event = await readJsonFixture("session-created");
+    const event = {
+      id: "evt_created",
+      created: Date.now(),
+      type: "session.created",
+      data: {
+        sessionID: "ses_child_1",
+        parentID: "ses_parent_1",
+        title: "Review auth changes",
+        agent: "reviewer",
+      },
+    };
 
-    expect(await readStatusText(harness.textPath)).toBe("↳ 0 running · 0 done · 0 error · Σ 0 total");
+    await runRuntimePlugin([event]);
 
-    await expect(plugin.event?.({ event } as never)).resolves.toBeUndefined();
+    expect(await readStatusText(harness.textPath)).toContain("Review auth changes");
 
     const state = await readRuntimeState<StatuslineState>(harness.statePath);
     expect(state.children.ses_child_1).toMatchObject({
@@ -45,7 +69,7 @@ describe("SubagentStatusline runtime", () => {
       "utf8",
     );
 
-    await createPlugin();
+    await runRuntimePlugin();
 
     expect(await readRuntimeState<StatuslineState>(harness.statePath)).toMatchObject({
       totalExecuted: 7,
@@ -57,11 +81,18 @@ describe("SubagentStatusline runtime", () => {
   it("handles malformed events and write failures without throwing", async () => {
     const harness = await createRuntimeHarness({ preserveState: true });
     await mkdir(harness.statePath, { recursive: true });
-    const plugin = await createPlugin();
-    const malformed = await readJsonFixture("malformed");
-    const valid = await readJsonFixture("session-created");
-
-    await expect(plugin.event?.({ event: malformed } as never)).resolves.toBeUndefined();
-    await expect(plugin.event?.({ event: valid } as never)).resolves.toBeUndefined();
+    await runRuntimePlugin([
+      null,
+      {
+        id: "evt_created",
+        created: Date.now(),
+        type: "session.created",
+        data: {
+          sessionID: "ses_child_1",
+          parentID: "ses_parent_1",
+          title: "Review auth changes",
+        },
+      },
+    ]);
   });
 });

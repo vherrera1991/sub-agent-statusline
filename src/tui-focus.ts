@@ -1,4 +1,7 @@
-export type SidebarReturnFocusAction = "none" | "clear-pending" | "focus-prompt";
+export type SidebarReturnFocusAction =
+  | "none"
+  | "clear-pending"
+  | "release-list-focus";
 
 export type PendingSidebarRefocus = {
   parentSessionID: string;
@@ -67,7 +70,7 @@ export function resolveSidebarReturnFocusAction(input: {
     previousRouteSessionID === pendingSidebarRefocus.childSessionID &&
     routeSessionID === pendingSidebarRefocus.parentSessionID
   ) {
-    return "focus-prompt";
+    return "release-list-focus";
   }
 
   if (routeSessionID !== pendingSidebarRefocus.childSessionID) {
